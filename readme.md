@@ -35,11 +35,3 @@ The main analysis script reads monthly generation and market value data from CSV
    quarto render 02-analysis/capture_price.qmd
    ```
 4. View the generated plots in `03-outputs/`.
-
-## Contributing
-
-Contributions are welcome. Please open an issue or submit a pull request.
-
-## License
-
-\[Your license here]
