@@ -13,3 +13,16 @@ __pycache__/
 
 # OS artefacts
 .DS_Store
+
+
+# renv package libraries
+02-analysis/renv/
+renv/library/
+
+# Python virtual env
+venv/
+
+# RStudio files
+.Rhistory
+.RData
+.Rproj.user/
