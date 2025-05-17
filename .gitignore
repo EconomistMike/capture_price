@@ -1,0 +1,15 @@
+
+# R package libraries
+renv/library/
+renv/python/
+
+# RStudio / Quarto
+.Rhistory
+.Rproj.user/
+
+# Python venv
+venv/
+__pycache__/
+
+# OS artefacts
+.DS_Store

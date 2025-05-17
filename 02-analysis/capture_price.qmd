@@ -1,0 +1,390 @@
+---
+title: "NEM & WEM Capture Price Analysis"
+format: html
+editor: visual
+---
+
+## Tools
+
+```{r}
+#| warning: false
+#| message: false
+
+library(readr)
+library(dplyr)
+library(stringr)
+library(zoo)      
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(here)
+library(lubridate)
+library(purrr)
+```
+
+## Capture price by technology
+
+```{r}
+
+# point to the folder with CSVs
+folder <- here("..", "01-nem-data")
+files  <- list.files(folder, "\\.csv$", full.names = TRUE)
+
+# region styling
+state_cols <- c(
+  "New South Wales"   = "#004EA2",
+  "Queensland"        = "#7C0A02",
+  "South Australia"   = "#E84E1B",
+  "Tasmania"          = "#006A4D",
+  "Victoria"          = "#8B008B",
+  "Western Australia" = "#FFD700",
+  "NEM"               = "black"
+)
+state_labels <- c(
+  "New South Wales"   = "NSW",
+  "Queensland"        = "QLD",
+  "South Australia"   = "SA",
+  "Tasmania"          = "TAS",
+  "Victoria"          = "VIC",
+  "Western Australia" = "WA",
+  "NEM"               = "NEM"
+)
+alpha_vals <- set_names(c(rep(1, 6), 0.6), names(state_cols)) # set transparency 
+size_vals  <- set_names(c(rep(1, 6), 2   ), names(state_cols))
+
+# which technologies to include (exclude batteries & pumps)
+tech_patterns <- c(
+  "Coal \\(Brown\\)",
+  "Coal \\(Black\\)",
+  "Bioenergy \\(Biomass\\)",
+  "Distillate",
+  "Gas \\(Steam\\)",
+  "Gas \\(CCGT\\)",
+  "Gas \\(OCGT\\)",
+  "Gas \\(Reciprocating\\)",
+  "Gas \\(Waste Coal Mine\\)",
+  "Hydro",
+  "Wind",
+  "Solar \\(Utility\\)",
+  "Solar \\(Rooftop\\)"
+)
+
+# import & compute capture prices
+all_prices <- map_dfr(files, function(file) {
+  df     <- read_csv(file, show_col_types = FALSE)
+  cols   <- names(df)
+  region <- basename(file) |>
+    tools::file_path_sans_ext() |>
+    str_remove("^\\d{8}\\s*")
+  date   <- df[[1]]
+  
+  map_dfr(tech_patterns, function(pat) {
+    energy_col <- grep(paste0("^", pat, " -.*GWh$"), cols, value = TRUE)
+    value_col  <- grep(paste0("^", pat, ".*Market Value"), cols, value = TRUE)
+    energy     <- if (length(energy_col)) df[[energy_col]] else NA_real_
+    value      <- if (length(value_col )) df[[value_col ]] else NA_real_
+    tibble(
+      Region = region,
+      Date   = date,
+      Source = gsub("\\\\", "", pat),
+      Price  = value / (energy * 1e3)
+    )
+  })
+})
+
+# rename regions and set factor levels
+all_prices <- all_prices %>%
+  mutate(
+    Region = recode(
+      Region,
+      "Open Electricity"            = "NEM",
+      "Western Australia (SWIS)"    = "Western Australia",
+      .default                      = Region
+    ),
+    Region = factor(Region, levels = names(state_cols))
+  )
+
+# compute 12-month rolling averages
+long_df_all <- all_prices %>%
+  filter(!Source %in% c("Battery (Charging)",
+                        "Battery (Discharging)",
+                        "Pumps")) %>%
+  group_by(Region, Source) %>%
+  arrange(Date) %>%
+  mutate(
+    # clean out Infs → NA
+    Price = ifelse(is.finite(Price), Price, NA_real_),
+
+    # rolling 12‐month average:
+    #   - no result until you have 12 months of data
+    #   - thereafter mean over the 12 values, skipping any NAs
+    Rolling12 = {
+      # compute the plain 12-month roll
+      roll <- rollapplyr(
+        Price,
+        width   = 12,
+        FUN     = function(x) {
+          if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE)
+        },
+        partial = FALSE,
+        fill    = NA_real_
+      )
+
+      # find the index of your very first non‐NA Price
+      fv <- which(!is.na(Price))[1]
+
+      # if that exists, blank out everything up through fv+11
+      if (!is.na(fv)) {
+        end_first_window <- fv + 11
+        end_first_window <- min(end_first_window, length(roll))
+        roll[seq_len(end_first_window)] <- NA_real_
+      }
+
+      roll
+    }
+  ) %>%
+  ungroup()
+
+# prepare output folder
+out_dir <- here("..", "03-outputs")
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+# base theme
+base_theme <- theme_classic(base_size = 14) +
+  theme(
+    panel.border       = element_rect(colour = "black", fill = NA),
+    panel.grid.major.y = element_line(colour = "grey80"),
+    panel.grid.major.x = element_blank(),
+    axis.ticks.length  = unit(-4, "pt"),
+    axis.title         = element_text(colour = "black"),
+    axis.text          = element_text(colour = "black"),
+    legend.position    = "bottom",
+    legend.key.width   = unit(1, "cm"),
+    plot.title         = element_text(face = "bold", hjust = 0),
+    plot.subtitle      = element_text(size = 12, hjust = 0)
+  )
+
+# loop: one plot per technology
+techs <- sort(unique(long_df_all$Source))
+
+for (tech in sort(unique(long_df_all$Source))) {
+  df <- filter(long_df_all, Source == tech)
+  
+  first_date <- min(df$Date[!is.na(df$Rolling12)], na.rm = TRUE)
+  x_min      <- max(as.Date("2014-01-01"), first_date)
+  x_max      <- max(df$Date, na.rm = TRUE)
+  
+  visible <- df %>%
+    filter(Date >= x_min) %>%
+    # drop any Regions not present in this tech
+    mutate(Region = droplevels(Region))
+  
+  y_br <- scales::pretty_breaks(n = 5)(visible$Rolling12)
+  y_br <- y_br[y_br >= 0]
+  y_labels_fn <- function(x) ifelse(x == 0, "", scales::comma(x))
+  
+  p <- ggplot(visible, aes(
+        x      = Date, 
+        y      = Rolling12,
+        colour = Region, 
+        alpha  = Region,
+        size   = Region
+      )) +
+    geom_line(na.rm = TRUE, key_glyph = draw_key_point) +
+    scale_colour_manual(
+      values = state_cols,
+      labels = state_labels,
+      name   = NULL,
+      guide  = guide_legend(
+        nrow = 2, byrow = TRUE,
+        override.aes = list(
+          linetype = 0, shape = 15, size = 5, alpha = 1
+        )
+      )
+    ) +
+    scale_alpha_manual(values = alpha_vals, guide = "none") +
+    scale_size_manual(values = size_vals, guide = "none") +
+    scale_x_date(
+      limits       = c(x_min, x_max),
+      breaks       = seq(floor_date(x_min, "year"), x_max, by = "1 year"),
+      minor_breaks = seq(floor_date(x_min, "year"), x_max, by = "3 months"),
+      date_labels  = "'%y",
+      expand       = expansion(add = c(0, 0))
+    ) +
+    scale_y_continuous(
+      limits   = c(0, max(y_br, na.rm = TRUE)),
+      breaks   = y_br,
+      labels   = y_labels_fn,
+      expand   = expansion(add = c(0, 0)),
+      sec.axis = dup_axis(labels = y_labels_fn)
+    ) +
+    labs(
+      title    = paste0(tech, " Capture Price"),
+      subtitle = "12-month rolling average",
+      x        = NULL,
+      y        = "Price ($/MWh)"
+    ) +
+    coord_cartesian(clip = "off") +
+    base_theme
+  
+  print(p)
+  ggsave(
+    here("..", "03-outputs", paste0(gsub("[^A-Za-z0-9]+","_", tech), ".png")),
+    plot   = p, width = 10, height = 6, dpi = 300
+  )
+}
+```
+
+## By Region
+
+```{r}
+
+# Abbreviations for regions
+state_abbrev <- c(
+  "New South Wales"   = "NSW",
+  "Queensland"        = "QLD",
+  "South Australia"   = "SA",
+  "Tasmania"          = "TAS",
+  "Victoria"          = "VIC",
+  "Western Australia" = "WA",
+  "NEM"               = "NEM"
+)
+
+# Map colours to technologies 
+tech_cols <- c(
+  "Coal (Brown)"           = "#8B4513",
+  "Coal (Black)"           = "#000000",
+  "Bioenergy (Biomass)"    = "#7F8C00",  
+  "Distillate"             = "#C1440E",  
+  "Gas (Steam)"            = "#00A2E8",  
+  "Gas (CCGT)"             = "#FF7F27",  
+  "Gas (OCGT)"             = "#00B3B8",  
+  "Gas (Reciprocating)"    = "#FF8C00",  
+  "Gas (Waste Coal Mine)"  = "#A4A4A4",  
+  "Hydro"                  = "#0072B2",  
+  "Wind"                   = "#8CC63F",  
+  "Solar (Utility)"        = "orange",  
+  "Solar (Rooftop)"        = "#FFC20E"   
+)
+
+# ─── Plotting function ─────────────────────────────────────────────────────────
+
+plot_region_sources <- function(data,
+                                region,
+                                sources,
+                                date_start = as.Date("2014-01-01")) {
+  
+  df <- data %>%
+    filter(
+      Region == region,
+      Source %in% sources,
+      Date >= date_start
+    ) %>%
+    arrange(Date) %>%
+    group_by(Source) %>%
+    mutate(
+      Rolling12 = rollapplyr(
+        Price,
+        width   = 12,
+        FUN     = function(x) if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE),
+        fill    = NA_real_,
+        partial = FALSE
+      )
+    ) %>%
+    ungroup()
+  
+  # dynamic x-axis limits + margin
+  x_min <- min(df$Date[!is.na(df$Rolling12)], na.rm = TRUE)
+  x_max <- max(df$Date, na.rm = TRUE)
+  span_days  <- as.numeric(x_max - x_min)
+  margin     <- ceiling(span_days * 0.10)    # 10% margin on the right
+  
+  # compute y-range for label offsets
+  y_vals   <- df$Rolling12[!is.na(df$Rolling12)]
+  y_range  <- diff(range(y_vals))
+  offset_y <- y_range * 0.02                # 2% of y-range
+  
+  # prepare last-point labels with slight y-offset for overlapping series
+  label_df <- df %>%
+    filter(!is.na(Rolling12)) %>%
+    group_by(Source) %>%
+    slice_max(Date, n = 1) %>%
+    ungroup() %>%
+    mutate(
+      lab   = paste0("$", round(Rolling12, 0))
+    )
+  
+  # pretty y-breaks (rounded)
+  y_breaks <- pretty(y_vals, n = 5)
+  
+  ggplot(df, aes(Date, Rolling12, colour = Source)) +
+  geom_line(size = 1, na.rm = TRUE) +
+  geom_text(
+    data        = label_df,
+    aes(x = Date, y = Rolling12, label = lab),
+    hjust       = 0,
+    nudge_x     = margin * 0.1,
+    size        = 4,
+    show.legend = FALSE
+  ) +
+  scale_colour_manual(
+    values = tech_cols,
+    guide  = guide_legend(nrow = 2, byrow = TRUE, title = NULL)
+  ) +
+  scale_x_date(
+    limits       = c(x_min, x_max + days(margin)),
+    breaks       = seq(floor_date(x_min, "year"), 
+                       ceiling_date(x_max, "year"), 
+                       by = "1 year"),
+    minor_breaks = seq(floor_date(x_min, "year"), 
+                       ceiling_date(x_max, "year"), 
+                       by = "3 months"),
+    date_labels  = "'%y",
+    expand       = expansion(add = c(0, 0))
+  ) +
+  scale_y_continuous(
+    limits = range(y_breaks),
+    breaks = y_breaks,
+    labels = comma_format(prefix = "$"),
+    expand = expansion(add = c(0, 0))
+  ) +
+  labs(
+    title    = paste("Generation capture price in", state_abbrev[region]),
+    subtitle = "12-month rolling average",
+    x        = NULL,
+    y        = "Price ($/MWh)"
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.border         = element_rect(colour = "black", fill = NA),
+    panel.grid.major.y   = element_line(colour = "grey80"),
+    panel.grid.major.x   = element_blank(),
+    axis.ticks.length    = unit(-4, "pt"),
+
+    # Legend adjustments
+    legend.position      = "bottom",
+    legend.direction     = "horizontal",
+    plot.margin          = margin(5, 5, 5, 5),
+    plot.title           = element_text(face = "bold", hjust = 0),
+    plot.subtitle        = element_text(size = 12, hjust = 0)
+  )
+}
+
+# ─── Example usage ─────────────────────────────────────────────────────────────
+
+my_region  <- "Victoria"
+my_sources <- c("Coal (Brown)", "Solar (Utility)", "Solar (Rooftop)", "Wind", "Gas (OCGT)")
+
+p <- plot_region_sources(all_prices, my_region, my_sources)
+print(p)
+
+# Optionally save:
+ggsave(
+  filename = here("..", "03-outputs", paste0(state_abbrev[my_region], "_capture.png")),
+  plot     = p,
+  width    = 10,
+  height   = 6,
+  dpi      = 300
+)
+```
