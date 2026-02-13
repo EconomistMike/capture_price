@@ -71,18 +71,22 @@ def download_region_csv(region, url, download_dir):
         driver.quit()
 
 def download_all_regions():
-    download_dir = os.path.join(os.getcwd(), "01-nem-data")
+    # Note: we chdir()'d into this script's folder above, so os.getcwd()
+    # already points at "01-nem-data".
+    download_dir = os.getcwd()
     os.makedirs(download_dir, exist_ok=True)
     print("Download directory is:", os.path.abspath(download_dir))
 
     region_urls = {
-        "nem":  "https://explore.openelectricity.org.au/energy/nem/?range=all&interval=1M&view=discrete-time&group=Detailed",
-        "nsw1": "https://explore.openelectricity.org.au/energy/nsw1/?range=all&interval=1M&view=discrete-time&group=Detailed",
-        "qld1": "https://explore.openelectricity.org.au/energy/qld1/?range=all&interval=1M&view=discrete-time&group=Detailed",
-        "sa1":  "https://explore.openelectricity.org.au/energy/sa1/?range=all&interval=1M&view=discrete-time&group=Detailed",
-        "tas1": "https://explore.openelectricity.org.au/energy/tas1/?range=all&interval=1M&view=discrete-time&group=Detailed",
-        "vic1": "https://explore.openelectricity.org.au/energy/vic1/?range=all&interval=1M&view=discrete-time&group=Detailed",
-        "wem":  "https://explore.openelectricity.org.au/energy/wem/?range=all&interval=1M&view=discrete-time&group=Detailed",
+        # Use all-12-mth-rolling so Market Value / Energy and VW price align
+        # on the same trailing-12-month window (matching the "old" ratio method).
+        "nem":  "https://explore.openelectricity.org.au/energy/nem/?range=all-12-mth-rolling&interval=1M&view=discrete-time&group=Detailed",
+        "nsw1": "https://explore.openelectricity.org.au/energy/nsw1/?range=all-12-mth-rolling&interval=1M&view=discrete-time&group=Detailed",
+        "qld1": "https://explore.openelectricity.org.au/energy/qld1/?range=all-12-mth-rolling&interval=1M&view=discrete-time&group=Detailed",
+        "sa1":  "https://explore.openelectricity.org.au/energy/sa1/?range=all-12-mth-rolling&interval=1M&view=discrete-time&group=Detailed",
+        "tas1": "https://explore.openelectricity.org.au/energy/tas1/?range=all-12-mth-rolling&interval=1M&view=discrete-time&group=Detailed",
+        "vic1": "https://explore.openelectricity.org.au/energy/vic1/?range=all-12-mth-rolling&interval=1M&view=discrete-time&group=Detailed",
+        "wem":  "https://explore.openelectricity.org.au/energy/wem/?range=all-12-mth-rolling&interval=1M&view=discrete-time&group=Detailed",
     }
 
     for region, url in region_urls.items():

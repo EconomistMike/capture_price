@@ -34,4 +34,11 @@ The main analysis script reads monthly generation and market value data from CSV
    ```bash
    quarto render 02-analysis/capture_price.qmd
    ```
-4. View the generated plots in `03-outputs/`.
+4. View the generated plots in:
+   - `03-outputs/excluding-curtailment/` (original method)
+   - `03-outputs/including-curtailment/` (includes curtailed wind and utility-scale solar generation in the denominator)
+
+## Outputs
+
+- Primary chart outputs are written to method-specific subfolders in `03-outputs/`.
+- Legacy root-level outputs are archived in `03-outputs/_legacy-root/`.
