@@ -122,3 +122,18 @@ test_that("diagnostics preserve rows and are carried by the assertion condition"
   x <- synthetic_metrics(); x$`Wind - GWh` <- c(1+1i, 2+0i)
   expect_capture_issue(x, "Wind - GWh")
 })
+
+
+test_that("malformed technology presence cannot hide behind another complete pair", {
+  for (heading in c("Wind - MWh", "Wind - GWh ")) {
+    x <- synthetic_metrics()
+    names(x)[names(x) == "Wind - GWh"] <- heading
+    x$`Wind - Market Value - AUD` <- NULL
+    expect_capture_issue(x, "Wind")
+    expect_false(any(capture_input_issues(x, "New South Wales")$field == "coverage"))
+  }
+  x <- synthetic_metrics()
+  x$`Wind - GWh` <- NULL
+  x$`Wind - Market Value - AUD` <- NULL
+  expect_true(assert_capture_input(x, "New South Wales"))
+})

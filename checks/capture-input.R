@@ -55,7 +55,7 @@ capture_input_issues <- function(data, region) {
     prefix <- startsWith(names(data), paste0(tech, " -"))
     energy <- names(data)[prefix & grepl("GWh$", names(data))]
     value <- names(data)[startsWith(names(data), tech) & grepl("Market Value", names(data), fixed = TRUE)]
-    if (!length(energy) && !length(value)) next
+    if (!any(prefix) && !length(value)) next
     present <- present + 1L
     e <- paste0(tech, " - GWh"); v <- paste0(tech, " - Market Value - AUD")
     if (!identical(energy, e) || !identical(value, v)) {
